@@ -220,7 +220,7 @@ def semantic_redeclared(name, prev_line, line, col, source_line):
 def semantic_wrong_arity(name, expected, got, line, col, source_line):
     return Diagnostic(
         SEVERITY_ERROR, PHASE_SEMANTIC, KIND_ARITY,
-        f"函数 {name!r} 需要 {got} 个参数，但传入了 {expected} 个",
+        f"函数 {name!r} 需要 {expected} 个参数，但传入了 {got} 个",
         line, col, 1, line, col + 1,
         f"调整调用处的实参个数为 {expected} 个，或修改函数定义。",
         None, source_line)

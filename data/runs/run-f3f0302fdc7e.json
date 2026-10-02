@@ -1,0 +1,15 @@
+{
+  "elapsed_ms": 0.022,
+  "error": null,
+  "id": "run-f3f0302fdc7e",
+  "instruction_count": 9,
+  "ok": true,
+  "output": [
+    "42"
+  ],
+  "profiled": false,
+  "project_id": "proj-05aa0361f5a4",
+  "return_value": null,
+  "timestamp": "08:32:03",
+  "version_id": "ver-40ea41110d3b"
+}

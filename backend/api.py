@@ -178,6 +178,16 @@ class Handler(BaseHTTPRequestHandler):
         if m and method == "POST":
             return self._json(200, svc.debug_stop(m.group(1)))
 
+        # ---- 表达式即时求值 ----
+        if path == "/api/evaluate" and method == "POST":
+            out = svc.evaluate(body.get("source", ""), body.get("expression", ""))
+            return self._json(200, out)
+
+        m = re.match(r"^/api/debug/([^/]+)/evaluate$", path)
+        if m and method == "POST":
+            out = svc.debug_evaluate(m.group(1), body.get("expression", ""))
+            return self._json(200, out)
+
         # ---- 设置 ----
         if path == "/api/settings" and method == "GET":
             settings = storage_read_settings()

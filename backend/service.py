@@ -27,6 +27,7 @@ from . import debugger as debugger_mod
 from . import profiler as profiler_mod
 from . import diagnostics as diag
 from . import memory_model
+from . import evaluator as evaluator_mod
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +337,7 @@ class Service:
     def debug_start(self, source, breakpoints=None, pid=None, vid=None):
         """创建并启动一个调试会话（编译 -> 建 VM -> 建调试器 -> 启动）。"""
         sid = self._new_session_id()
-        sess = DebugSession(sid, source, [b + 1 for b in (breakpoints or [])], pid, vid)
+        sess = DebugSession(sid, source, list(breakpoints or []), pid, vid)
         self.debug_sessions[sid] = sess
         sess.start()
         return self.debug_state(sid)
@@ -370,6 +371,42 @@ class Service:
         if not sess or not sess.vm:
             return None
         return sess.vm.heap.snapshot(sess.vm.frame_snapshot())
+
+    # ==================================================================
+    # 表达式即时求值
+    # ==================================================================
+    def evaluate(self, source, expression):
+        """独立模式：复用当前源码的编译 + VM 运行链路，程序跑完后在全局作用域求值。"""
+        source = source or ""
+        result = compiler_mod.compile_source(source)
+        if not result.success:
+            return {"ok": False, "stage": "program",
+                    "diagnostics": result.diagnostics.to_list()}
+        vm = vm_mod.VM(result.bytecode, result.source_lines)
+        vm.start()
+        vm.run()
+        if vm.error is not None:
+            return {"ok": False, "stage": "program",
+                    "error": vm.error.to_dict(),
+                    "output": list(vm.output)}
+        # 独立模式没有"当前帧"，表达式只能看到全局变量 / 用户函数 / 内置函数
+        out = evaluator_mod.evaluate(vm, expression, frame=None)
+        out["program_output"] = list(vm.output)
+        return out
+
+    def debug_evaluate(self, sid, expression):
+        """调试暂停模式：在会话当前暂停帧的作用域内即时求值，不影响会话状态。"""
+        sess = self.debug_sessions.get(sid)
+        if not sess:
+            return {"ok": False, "error": "会话不存在或已过期", "session_id": sid}
+        if not sess.result.success:
+            return {"ok": False, "stage": "program",
+                    "diagnostics": sess.result.diagnostics.to_list()}
+        vm = sess.vm
+        if vm is None or not vm.frames or vm.error is not None:
+            return {"ok": False, "error": "调试会话尚未开始或已结束，无法求值"}
+        frame = vm.frames[-1]
+        return evaluator_mod.evaluate(vm, expression, frame=frame)
 
 
 class DebugSession:

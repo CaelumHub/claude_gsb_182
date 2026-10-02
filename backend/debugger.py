@@ -76,7 +76,8 @@ class Debugger:
                 return True
             return False
         if self.step_mode == "over":
-            if len(vm.frames) < self._step_depth and ins.line != self._step_from_line:
+            # 只在当前帧（或更浅帧）且源码行变化时暂停；深入被调用函数时不暂停
+            if len(vm.frames) <= self._step_depth and ins.line != self._step_from_line:
                 self.pause_reason = PAUSE_STEP
                 return True
             return False

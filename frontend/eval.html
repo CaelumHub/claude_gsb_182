@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>表达式即时求值 · MiniLang 平台</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="main">
+    <header class="topbar" id="topbar"></header>
+    <div class="content">
+      <div class="flex wrap between mb">
+        <div class="flex wrap" style="gap:8px">
+          <select id="sample"></select>
+          <button class="btn sm" id="btn-loadproj">📂 载入项目源码</button>
+        </div>
+        <div class="flex wrap" style="gap:8px">
+          <button class="btn" id="btn-run">▶ 先运行程序</button>
+          <button class="btn primary" id="btn-eval">🧮 求值（Ctrl+Enter）</button>
+        </div>
+      </div>
+
+      <div class="muted mb" style="font-size:12.5px">
+        💡 表达式会在上方程序<strong>运行结束后的全局作用域</strong>中求值，复用同一套词法 / 语法 / 字节码 / VM 链路——
+        可直接访问全局变量、用户函数与内置函数，支持列表、字符串、下标、调用与 <span class="mono">&amp;&amp;</span> / <span class="mono">||</span> 短路逻辑。
+        想在函数局部作用域求值，请到<a href="debug.html">执行跟踪与单步调试</a>页暂停后使用监视面板。
+      </div>
+
+      <div id="editor"></div>
+
+      <div class="card mt">
+        <h2>🧮 表达式求值</h2>
+        <div class="eval-input-row">
+          <span class="eval-prompt mono">&gt;&gt;&gt;</span>
+          <input type="text" id="expr-input" class="mono" spellcheck="false"
+                 autocomplete="off" list="expr-names"
+                 placeholder="输入表达式，例如 fib(10)、len(xs)、xs[0] + 1、s + \"!\"、x > 0 && f(x)">
+          <datalist id="expr-names"></datalist>
+          <button class="btn primary sm" id="btn-eval2">求值</button>
+          <button class="btn ghost sm" id="btn-clear" title="清空历史">清空</button>
+        </div>
+        <div class="muted" style="font-size:12px;margin-top:6px">
+          快捷键 <kbd>Ctrl</kbd> + <kbd>Enter</kbd>（macOS 为 <kbd>⌘</kbd> + <kbd>Enter</kbd>）求值；<kbd>↑</kbd> / <kbd>↓</kbd> 翻历史表达式。
+        </div>
+        <div id="eval-result" class="eval-result" style="display:none"></div>
+        <div id="eval-history" class="eval-history"></div>
+      </div>
+
+      <div class="grid cols-2">
+        <div class="card">
+          <h2>📤 程序输出（求值前运行产生）</h2>
+          <div class="output-console" id="prog-output" style="min-height:80px;max-height:180px">
+            <span class="muted">尚未运行。求值时会自动先完整运行一遍程序。</span>
+          </div>
+        </div>
+        <div class="card">
+          <h2>🏷️ 当前作用域可见名字</h2>
+          <div class="desc" style="margin-bottom:8px">求值后自动刷新，点击名字可插入到表达式输入框。</div>
+          <div id="scope-names" class="eval-names"><span class="muted">求值一次后显示。</span></div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="js/common.js"></script>
+<script src="js/editor.js"></script>
+<script>
+(function () {
+  ML.Shell.render("eval");
+  ML.Shell.setTitle("表达式即时求值");
+
+  const editor = new ML.CodeEditor(document.getElementById("editor"), {
+    value: ML.store.get("draft_source", ML.DEFAULT_CODE), height: 340,
+    onValueChange: ML.debounce((v) => ML.store.set("draft_source", v), 400),
+  });
+
+  /* 示例 / 项目载入 */
+  const sampleSel = document.getElementById("sample");
+  sampleSel.innerHTML = '<option value="">— 载入示例 —</option>' +
+    ML.SAMPLES.map((s, i) => `<option value="${i}">${ML.escapeHtml(s.name)}</option>`).join("");
+  sampleSel.onchange = () => { if (sampleSel.value !== "") { editor.setValue(ML.SAMPLES[+sampleSel.value].code); sampleSel.value = ""; } };
+  document.getElementById("btn-loadproj").onclick = async () => editor.setValue(await ML.Shell.loadSource(ML.DEFAULT_CODE));
+
+  const exprInput = document.getElementById("expr-input");
+  const resultEl = document.getElementById("eval-result");
+  const historyEl = document.getElementById("eval-history");
+  const progOutput = document.getElementById("prog-output");
+  const scopeEl = document.getElementById("scope-names");
+  const datalist = document.getElementById("expr-names");
+
+  let lastNames = null;
+  const hist = [];
+  let histIdx = -1;
+  let busy = false;
+
+  /* 作用域名字：datalist 自动补全 + 可点击徽标 */
+  function renderNames(names) {
+    lastNames = names;
+    if (!names) { scopeEl.innerHTML = '<span class="muted">求值一次后显示。</span>'; return; }
+    const groups = [
+      ["locals", "局部变量", "blue"], ["globals", "全局变量", "green"],
+      ["functions", "用户函数", "purple"], ["builtins", "内置函数", "cyan"],
+    ];
+    let html = "";
+    for (const [key, label, cls] of groups) {
+      const arr = names[key] || [];
+      if (!arr.length) continue;
+      html += `<div class="eval-name-group"><span class="muted" style="font-size:11.5px">${label}</span><div>` +
+        arr.map((n) => `<span class="badge ${cls} eval-name" data-name="${ML.escapeHtml(n)}">${ML.escapeHtml(n)}</span>`).join("") +
+        `</div></div>`;
+    }
+    scopeEl.innerHTML = html || '<span class="muted">（无）</span>';
+    datalist.innerHTML = (names.all || []).map((n) => `<option value="${ML.escapeHtml(n)}">`).join("");
+    scopeEl.querySelectorAll(".eval-name").forEach((el) => {
+      el.style.cursor = "pointer";
+      el.onclick = () => { exprInput.value = el.dataset.name; exprInput.focus(); };
+    });
+  }
+
+  function renderProgramOutput(lines) {
+    if (lines && lines.length) {
+      progOutput.innerHTML = lines.map((l) => `<span class="ln-out">${ML.escapeHtml(l)}</span>`).join("<br>");
+    } else {
+      progOutput.innerHTML = '<span class="muted">（程序无输出）</span>';
+    }
+  }
+
+  function resultBlock(ok, exprHtml, bodyHtml) {
+    return `<div class="eval-row ${ok ? "ok" : "bad"}">
+      <div class="eval-expr"><span class="eval-prompt mono">&gt;&gt;&gt;</span>${exprHtml}</div>
+      ${bodyHtml}
+    </div>`;
+  }
+
+  async function doEvaluate() {
+    const expr = exprInput.value;
+    if (busy) return;
+    busy = true;
+    document.getElementById("btn-eval").disabled = true;
+    document.getElementById("btn-eval2").disabled = true;
+    try {
+      const data = await ML.api.evaluate(editor.getValue(), expr);
+      renderProgramOutput(data.program_output);
+      if (data.names) renderNames(data.names);
+      showResult(data);
+      pushHistory(expr, data);
+      if (data.ok || data.stage === "expression") {
+        hist.push(expr); histIdx = hist.length;
+      }
+    } catch (e) {
+      showResult({ ok: false, error: { message: "请求失败：" + e } });
+    } finally {
+      busy = false;
+      document.getElementById("btn-eval").disabled = false;
+      document.getElementById("btn-eval2").disabled = false;
+    }
+  }
+
+  function showResult(data) {
+    const exprHtml = ML.escapeHtml(exprInput.value || "");
+    let body;
+    if (data.ok) {
+      const prints = (data.prints || []).length
+        ? `<div class="eval-prints muted">求值过程中的 print 输出：${data.prints.map((p) => ML.escapeHtml(p)).join(" / ")}</div>` : "";
+      body = `<div class="eval-value-row"><span class="eval-arrow mono">⟹</span>
+          <span class="eval-value mono">${ML.fmtVal(data.value)}</span>
+          ${ML.badge(data.type, "gray")}
+          <span class="muted" style="font-size:11.5px">${data.instruction_count} 条指令</span>
+        </div>${prints}`;
+      resultEl.className = "eval-result ok";
+    } else {
+      let diagHtml;
+      if (data.stage === "expression" && data.diagnostics) {
+        diagHtml = data.diagnostics.map((d) => ML.renderDiagnostic(d, exprInput.value)).join("");
+      } else if (data.stage === "program" && data.diagnostics) {
+        diagHtml = `<div class="muted mb" style="font-size:12.5px">程序自身存在编译错误，无法建立运行作用域：</div>` +
+          ML.renderDiagnostics(data.diagnostics, editor.getValue());
+      } else if (data.error) {
+        const d = data.error;
+        diagHtml = ML.renderDiagnostic(d, d.phase === "runtime" && d.source_line && exprInput.value.includes(d.source_line) ? exprInput.value : editor.getValue());
+      } else {
+        diagHtml = `<div class="diag error"><div class="msg">${ML.escapeHtml(data.error && data.error.message || "求值失败")}</div></div>`;
+      }
+      body = `<div class="eval-error">${diagHtml}</div>`;
+      resultEl.className = "eval-result bad";
+    }
+    resultEl.style.display = "block";
+    resultEl.innerHTML = resultBlock(data.ok, exprHtml, body);
+  }
+
+  function pushHistory(expr, data) {
+    const exprHtml = ML.escapeHtml(expr || "");
+    let body;
+    if (data.ok) {
+      body = `<div class="eval-value-row"><span class="eval-arrow mono">⟹</span><span class="eval-value mono">${ML.fmtVal(data.value)}</span> ${ML.badge(data.type, "gray")}</div>`;
+    } else {
+      const msg = (data.diagnostics && data.diagnostics[0] && data.diagnostics[0].message)
+        || (data.error && data.error.message) || "求值失败";
+      body = `<div class="eval-value-row"><span class="eval-arrow mono">⟹</span><span class="val-null mono">✘ ${ML.escapeHtml(msg)}</span></div>`;
+    }
+    historyEl.insertAdjacentHTML("afterbegin", resultBlock(data.ok, exprHtml, body));
+  }
+
+  document.getElementById("btn-eval").onclick = doEvaluate;
+  document.getElementById("btn-eval2").onclick = doEvaluate;
+  document.getElementById("btn-run").onclick = async () => {
+    const data = await ML.api.run(editor.getValue(), {});
+    const r = data.result || {};
+    renderProgramOutput(r.output);
+    if (r.error) ML.toast("程序运行出错，求值仍可尝试（作用域可能不完整）", "err");
+    else ML.toast("程序已运行", "ok");
+  };
+  document.getElementById("btn-clear").onclick = () => {
+    historyEl.innerHTML = ""; resultEl.style.display = "none";
+    hist.length = 0; histIdx = -1;
+  };
+
+  exprInput.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); doEvaluate(); }
+    if (e.key === "ArrowUp" && hist.length) {
+      e.preventDefault();
+      histIdx = Math.max(0, histIdx - 1);
+      exprInput.value = hist[histIdx];
+    }
+    if (e.key === "ArrowDown" && hist.length) {
+      e.preventDefault();
+      histIdx = Math.min(hist.length, histIdx + 1);
+      exprInput.value = histIdx === hist.length ? "" : hist[histIdx];
+    }
+  });
+
+  /* 小屏适配沿用 .grid 媒体查询；首次聚焦输入框 */
+  exprInput.focus();
+})();
+</script>
+</body>
+</html>

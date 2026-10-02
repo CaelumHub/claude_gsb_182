@@ -51,6 +51,8 @@ def run_all():
     _test_lists()
     _test_runtime_errors()
     _test_debugger()
+    _test_evaluator()
+    _test_evaluator_debug_scope()
     _test_profiler()
     _test_memory_model()
     _test_storage()
@@ -180,6 +182,96 @@ def _test_debugger():
     snap3 = dbg.snapshot()
     ok_finish = snap3["finished"] is True and vm.output == ["3"]
     _check("调试器：继续运行到程序结束", ok_finish, str(vm.output))
+
+
+def _test_evaluator():
+    """表达式即时求值：复用编译/运行链路，支持列表/字符串/调用/短路。"""
+    from . import evaluator
+    from . import service
+    svc = service.Service()
+    src = ("func fib(n) { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }\n"
+           "var a = [1, 2, 3];\nvar s = \"hi\";\nvar x = 10;\n")
+
+    r = svc.evaluate(src, "1 + 2 * 3")
+    _check("即时求值：算术与优先级", r.get("ok") and r["display"] == "7", str(r))
+
+    r = svc.evaluate(src, "fib(10)")
+    _check("即时求值：调用用户函数（递归）", r.get("ok") and r["display"] == "55", str(r))
+
+    r = svc.evaluate(src, "len(a)")
+    _check("即时求值：内置函数 len", r.get("ok") and r["value"]["value"] == 3, str(r))
+
+    r = svc.evaluate(src, "a[1] + 100")
+    _check("即时求值：列表下标", r.get("ok") and r["display"] == "102", str(r))
+
+    r = svc.evaluate(src, 's + "!"')
+    _check("即时求值：字符串拼接", r.get("ok") and r["value"]["value"] == "hi!", str(r))
+
+    r = svc.evaluate(src, "[9] + a")
+    _check("即时求值：列表字面量与拼接", r.get("ok") and r["value"]["len"] == 4, str(r))
+
+    # 短路逻辑：右操作数含除零但不应被执行
+    r1 = svc.evaluate(src, "false && 1 / 0")
+    r2 = svc.evaluate(src, "true || 1 / 0")
+    _check("即时求值：&& / || 短路不执行错误分支",
+           r1.get("ok") and r1["display"] == "false"
+           and r2.get("ok") and r2["display"] == "true", str((r1, r2)))
+
+    r = svc.evaluate(src, "1 / 0")
+    ok_err = (not r.get("ok")) and r.get("error") is not None and "除以零" in r["error"]["message"]
+    _check("即时求值：表达式运行时错误给出具体诊断", ok_err, str(r.get("error")))
+
+    r = svc.evaluate(src, "nope + 1")
+    ok_name = (not r.get("ok")) and r.get("stage") == "expression" and \
+        any("未定义" in d["message"] for d in r.get("diagnostics", []))
+    _check("即时求值：未定义名字给出词法/语义级错误提示", ok_name, str(r))
+
+    r = svc.evaluate(src, "fib(10")
+    ok_syntax = (not r.get("ok")) and r.get("stage") == "expression" and \
+        any(d["phase"] == "parse" for d in r.get("diagnostics", []))
+    _check("即时求值：语法错误给出具体提示", ok_syntax, str(r))
+
+
+def _test_evaluator_debug_scope():
+    """调试暂停帧作用域求值 + 会话状态隔离。"""
+    from . import evaluator
+    src = ("func calc(n) {\n"
+           "    var acc = 0;\n"
+           "    for (var i = 1; i <= n; i = i + 1) {\n"
+           "        acc = acc + i;\n"
+           "    }\n"
+           "    return acc;\n"
+           "}\n"
+           "print(calc(5));")
+    res = compiler.compile_source(src)
+    assert res.success, "编译失败"
+    m = vm_mod.VM(res.bytecode, res.source_lines)
+    dbg = debugger_mod.Debugger(m, set())
+    m.start()
+    dbg.set_breakpoints([4])
+    dbg.continue_()
+    _check("调试求值：断点已暂停在函数内",
+           dbg.pause_reason == "breakpoint" and m.frames[-1].func_name == "calc")
+
+    frame = m.frames[-1]
+    # 当前局部变量可见（acc、i 是函数内 var）
+    r = evaluator.evaluate(m, "acc + i + n", frame)
+    _check("调试求值：访问当前帧局部变量/形参", r.get("ok") and r["display"], str(r)[:200])
+
+    r = evaluator.evaluate(m, "calc(3)", frame)
+    _check("调试求值：在暂停帧调用用户函数", r.get("ok") and r["display"] == "6", str(r)[:200])
+
+    r = evaluator.evaluate(m, "1 / 0", frame)
+    _check("调试求值：错误不污染会话", (not r.get("ok")) and m.error is None
+           and m.paused and not m.finished, str((r.get("error"), m.error)))
+
+    # 求值后调用栈 / 输出 / 暂停状态保持不变，可继续执行
+    stack_ok = [f.func_name for f in m.frames] == ["<main>", "calc"]
+    dbg.clear_breakpoints()
+    dbg.continue_()
+    ok_finish = m.finished and m.output == ["15"] and m.error is None
+    _check("调试求值：求值后会话可继续到正常结束", stack_ok and ok_finish,
+           f"stack={stack_ok}, out={m.output}, err={m.error}")
 
 
 def _test_profiler():

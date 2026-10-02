@@ -427,7 +427,7 @@ class Parser:
             self._advance()
             text = tok.text
             try:
-                if "e" in text.lower():
+                if "." in text or "e" in text.lower():
                     value = float(text)
                 else:
                     value = int(text)

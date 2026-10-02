@@ -407,6 +407,29 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .diff-line.del { background: var(--danger-soft); color: var(--danger); }
 .diff-line .mark { margin-right: 8px; font-weight: 700; }
 
+/* ---------- 表达式即时求值 ---------- */
+.eval-input-row { display: flex; align-items: center; gap: 8px; }
+.eval-input-row input[type="text"] { flex: 1; font-size: 14px; padding: 9px 12px; }
+.eval-prompt { color: var(--primary); font-weight: 700; user-select: none; }
+.eval-result { margin-top: 12px; }
+.eval-history { margin-top: 10px; }
+.eval-row {
+  border: 1px solid var(--border); border-left-width: 4px;
+  border-radius: var(--radius-sm); padding: 8px 12px; margin-top: 8px;
+  background: var(--surface);
+}
+.eval-row.ok { border-left-color: var(--success); }
+.eval-row.bad { border-left-color: var(--danger); }
+.eval-expr { font-family: var(--mono); font-size: 13px; color: var(--text); display: flex; gap: 8px; align-items: baseline; }
+.eval-value-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
+.eval-arrow { color: var(--text-faint); }
+.eval-value { font-size: 14px; font-weight: 600; }
+.eval-prints { font-size: 12px; margin-top: 4px; }
+.eval-error .diag { margin: 6px 0 0; }
+.eval-names .eval-name-group { margin-bottom: 8px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.eval-names .badge { margin: 2px 3px 2px 0; }
+.eval-names .badge:hover { filter: brightness(.97); }
+
 /* ---------- 杂项 ---------- */
 .flex { display: flex; gap: 10px; align-items: center; }
 .flex.wrap { flex-wrap: wrap; }

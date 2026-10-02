@@ -34,6 +34,22 @@
 
       <div id="dbg-status" class="flex wrap mt" style="gap:8px;min-height:26px"></div>
 
+      <div class="card mt">
+        <h2>🧮 表达式监视（当前暂停作用域即时求值）</h2>
+        <div class="desc">
+          调试暂停时，表达式在<strong>当前栈帧</strong>的作用域中即时求值，可访问当前函数局部变量、全局变量、用户函数与内置函数；
+          求值复用同一条字节码 + VM 链路，支持列表、字符串、下标、调用与短路逻辑，且<strong>不会改变调试会话状态</strong>。
+        </div>
+        <div class="eval-input-row">
+          <span class="eval-prompt mono">&gt;&gt;&gt;</span>
+          <input type="text" id="watch-input" class="mono" spellcheck="false" autocomplete="off" list="watch-names"
+                 placeholder="暂停后输入，例如 acc * 2、len(xs)、fib(5)、xs[i]">
+          <datalist id="watch-names"></datalist>
+          <button class="btn primary sm" id="btn-watch">求值</button>
+        </div>
+        <div id="watch-result" class="eval-result" style="display:none"></div>
+      </div>
+
       <div class="grid cols-2 mt">
         <div class="card">
           <h2>📚 调用栈</h2>
@@ -153,6 +169,7 @@
     if (state.error) {
       document.getElementById("locals").innerHTML = ML.renderDiagnostic(state.error, editor.getValue());
     }
+    updateWatchNames(state);
   }
 
   function renderVars(vars) {
@@ -180,6 +197,76 @@
     setButtons(data.ok && !data.finished && !data.not_started && !data.compile_failed);
     renderState(data);
   }
+
+  /* ---- 表达式即时求值（复用当前暂停帧的作用域） ---- */
+  const watchInput = document.getElementById("watch-input");
+  const watchResult = document.getElementById("watch-result");
+  const watchDatalist = document.getElementById("watch-names");
+
+  function updateWatchNames(state) {
+    const names = new Set();
+    const frames = state.call_stack || [];
+    if (frames.length) Object.keys(frames[0].locals || {}).forEach((n) => names.add(n));
+    Object.keys(state.globals || {}).forEach((n) => names.add(n));
+    watchDatalist.innerHTML = Array.from(names).sort()
+      .map((n) => `<option value="${ML.escapeHtml(n)}">`).join("");
+  }
+
+  async function doWatch() {
+    const expr = watchInput.value;
+    if (!sid || !active) {
+      ML.toast("请先启动调试并暂停（断点 / 单步）后再求值", "err");
+      return;
+    }
+    if (!expr.trim()) return;
+    const btn = document.getElementById("btn-watch");
+    btn.disabled = true;
+    try {
+      const data = await ML.api.debugEvaluate(sid, expr);
+      let body;
+      if (data.ok) {
+        const prints = (data.prints || []).length
+          ? `<div class="eval-prints muted">求值中的 print 输出：${data.prints.map(ML.escapeHtml).join(" / ")}</div>` : "";
+        body = `<div class="eval-value-row"><span class="eval-arrow mono">⟹</span>
+            <span class="eval-value mono">${ML.fmtVal(data.value)}</span>
+            ${ML.badge(data.type, "gray")}
+            <span class="muted" style="font-size:11.5px">${data.instruction_count} 条指令</span>
+          </div>${prints}`;
+        watchResult.className = "eval-result ok";
+        if (data.names) {
+          const names = new Set([
+            ...(data.names.locals || []), ...(data.names.globals || []),
+            ...(data.names.functions || []), ...(data.names.builtins || [])]);
+          watchDatalist.innerHTML = Array.from(names).sort()
+            .map((n) => `<option value="${ML.escapeHtml(n)}">`).join("");
+        }
+      } else {
+        let diagHtml;
+        if (data.stage === "expression" && data.diagnostics) {
+          diagHtml = data.diagnostics.map((d) => ML.renderDiagnostic(d, expr)).join("");
+        } else if (data.error) {
+          diagHtml = ML.renderDiagnostic(data.error,
+            data.error.source_line && expr.includes(data.error.source_line) ? expr : editor.getValue());
+        } else {
+          diagHtml = `<div class="diag error"><div class="msg">${ML.escapeHtml(data.error || "求值失败")}</div></div>`;
+        }
+        body = `<div class="eval-error">${diagHtml}</div>`;
+        watchResult.className = "eval-result bad";
+      }
+      watchResult.style.display = "block";
+      watchResult.innerHTML = `<div class="eval-row ${data.ok ? "ok" : "bad"}">
+        <div class="eval-expr"><span class="eval-prompt mono">&gt;&gt;&gt;</span>${ML.escapeHtml(expr)}</div>${body}</div>`;
+    } catch (e) {
+      ML.toast("求值请求失败：" + e, "err");
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  document.getElementById("btn-watch").onclick = doWatch;
+  watchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); doWatch(); }
+  });
 
   document.getElementById("btn-start").onclick = start;
   document.getElementById("btn-cont").onclick = () => cmd("continue_");
