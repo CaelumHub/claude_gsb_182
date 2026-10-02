@@ -76,7 +76,7 @@ class Debugger:
                 return True
             return False
         if self.step_mode == "over":
-            if len(vm.frames) < self._step_depth and ins.line != self._step_from_line:
+            if len(vm.frames) <= self._step_depth and ins.line != self._step_from_line:
                 self.pause_reason = PAUSE_STEP
                 return True
             return False
@@ -109,9 +109,9 @@ class Debugger:
         if self._just_started:
             self._just_started = False
             self.vm.start()
-            # 若第一行就有断点，暂停在入口；否则直接运行
             if self._first_line_breakpoint():
                 self.pause_reason = PAUSE_BREAKPOINT
+                self.vm.paused = True
                 return
         self.continue_()
 
@@ -178,6 +178,11 @@ class Debugger:
     def to_error_pause(self):
         self.pause_reason = PAUSE_ERROR
         self.step_mode = None
+
+    def evaluate_expression(self, expression):
+        """在当前暂停帧的作用域中求值表达式；不推进被调试程序的正式执行状态。"""
+        from . import evaluator
+        return evaluator.evaluate(self.vm, expression)
 
 
 def _serialize(vm, name):

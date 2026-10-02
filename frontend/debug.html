@@ -34,6 +34,16 @@
 
       <div id="dbg-status" class="flex wrap mt" style="gap:8px;min-height:26px"></div>
 
+      <div class="card mt">
+        <h2>🧮 表达式求值</h2>
+        <div class="muted desc">调试暂停时可直接计算表达式，复用当前 VM、字节码与作用域：可访问当前帧局部变量、用户函数和内置函数。</div>
+        <div class="flex wrap" style="gap:8px">
+          <input type="text" id="eval-input" class="mono" placeholder='例如：n + 1、len(a)、a[0]、str(n) + "!"、fib(n - 1)、false &amp;&amp; boom()' style="flex:1;min-width:320px">
+          <button class="btn primary" id="btn-eval" disabled>求值</button>
+        </div>
+        <div id="eval-result" class="eval-result muted">启动调试并暂停后输入表达式</div>
+      </div>
+
       <div class="grid cols-2 mt">
         <div class="card">
           <h2>📚 调用栈</h2>
@@ -82,6 +92,14 @@
     });
   }
 
+  function setEvalEnabled(on) {
+    document.getElementById("btn-eval").disabled = !on;
+    const box = document.getElementById("eval-result");
+    if (!on && !box.classList.contains("err")) {
+      box.textContent = sid ? "程序已结束，重新启动并暂停后可继续求值" : "启动调试并暂停后输入表达式";
+    }
+  }
+
   function renderState(state) {
     const status = document.getElementById("dbg-status");
     if (!state.ok) {
@@ -89,21 +107,25 @@
         status.innerHTML = ML.badge("编译失败，无法调试", "red");
         document.getElementById("locals").innerHTML = ML.renderDiagnostics(state.diagnostics, editor.getValue());
         setButtons(false);
+        setEvalEnabled(false);
         active = false;
         return;
       }
       status.innerHTML = ML.badge("会话不存在或已过期", "red");
       setButtons(false);
+      setEvalEnabled(false);
       active = false;
       return;
     }
     if (state.not_started) {
       status.innerHTML = ML.badge("未启动", "gray");
       setButtons(false);
+      setEvalEnabled(false);
       active = false;
       return;
     }
 
+    setEvalEnabled(!state.finished && !state.error && (state.paused || state.reason === "entry"));
     const [rl, rc] = REASON[state.reason] || [state.reason || "暂停", "gray"];
     status.innerHTML =
       ML.badge("暂停原因：" + rl, rc) +
@@ -181,15 +203,47 @@
     renderState(data);
   }
 
+  async function evaluate() {
+    const input = document.getElementById("eval-input");
+    const out = document.getElementById("eval-result");
+    const expression = input.value.trim();
+    if (!expression) { ML.toast("请先输入表达式", "err"); input.focus(); return; }
+    if (!sid) { ML.toast("请先启动调试", "err"); return; }
+    document.getElementById("btn-eval").disabled = true;
+    out.className = "eval-result muted";
+    out.textContent = "求值中…";
+    const data = await ML.api.debugEvaluate(sid, expression);
+    document.getElementById("btn-eval").disabled = false;
+    if (!data.ok) {
+      out.className = "eval-result err";
+      out.innerHTML = esc(data.error || "表达式求值失败");
+      return;
+    }
+    if (data.diagnostics && data.diagnostics.length) {
+      out.className = "eval-result err";
+      out.innerHTML = data.diagnostics.map((d) =>
+        `${ML.badge(d.phase, "gray")} L${d.line}:C${d.column} ${esc(d.message)}` +
+        (d.fix ? `<div class="muted">💡 ${esc(d.fix)}</div>` : "")).join("<br>");
+      return;
+    }
+    out.className = "eval-result ok";
+    out.innerHTML = ML.fmtVal(data.value) +
+      ((data.output || []).length ? `<div class="eval-output">输出：${esc(data.output.join("\n"))}</div>` : "");
+  }
+
   document.getElementById("btn-start").onclick = start;
   document.getElementById("btn-cont").onclick = () => cmd("continue_");
   document.getElementById("btn-stepi").onclick = () => cmd("step_instruction");
   document.getElementById("btn-stepin").onclick = () => cmd("step_into");
   document.getElementById("btn-stepover").onclick = () => cmd("step_over");
   document.getElementById("btn-stepout").onclick = () => cmd("step_out");
+  document.getElementById("btn-eval").onclick = evaluate;
+  document.getElementById("eval-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !document.getElementById("btn-eval").disabled) evaluate();
+  });
   document.getElementById("btn-stop").onclick = async () => {
     if (sid) await ML.api.debugStop(sid);
-    sid = null; active = false; setButtons(false);
+    sid = null; active = false; setButtons(false); setEvalEnabled(false);
     editor.setCurrentLine(null);
     document.getElementById("dbg-status").innerHTML = ML.badge("已停止", "gray");
   };

@@ -433,4 +433,18 @@ input[type="text"], input[type="number"], select, textarea.plain {
   background: var(--surface); color: var(--text); outline: none;
 }
 input:focus, select:focus, textarea:focus { border-color: var(--primary); }
+.eval-result {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 13px;
+  white-space: pre-wrap;
+  min-height: 38px;
+}
+.eval-result.ok { border-color: var(--success); }
+.eval-result.err { border-color: var(--danger); background: var(--danger-soft); color: var(--danger); }
+.eval-output { color: var(--text-muted); margin-top: 6px; }
 kbd { background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 4px; padding: 1px 6px; font-size: 11px; font-family: var(--mono); }

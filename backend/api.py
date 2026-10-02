@@ -174,6 +174,10 @@ class Handler(BaseHTTPRequestHandler):
             state = svc.debug_command(m.group(1), body.get("command", "continue"),
                                       body.get("breakpoints"))
             return self._json(200, state)
+        m = re.match(r"^/api/debug/([^/]+)/evaluate$", path)
+        if m and method == "POST":
+            result = svc.debug_evaluate(m.group(1), body.get("expression", ""))
+            return self._json(200, result)
         m = re.match(r"^/api/debug/([^/]+)/stop$", path)
         if m and method == "POST":
             return self._json(200, svc.debug_stop(m.group(1)))

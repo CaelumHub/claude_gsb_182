@@ -147,6 +147,7 @@
     debugStart(source, breakpoints, pid, vid) { return this.post("/api/debug/start", { source, breakpoints: breakpoints || [], project_id: pid, version_id: vid }); },
     debugState(sid) { return this.get(`/api/debug/${sid}/state`); },
     debugCommand(sid, command, breakpoints) { return this.post(`/api/debug/${sid}/command`, { command, breakpoints }); },
+    debugEvaluate(sid, expression) { return this.post(`/api/debug/${sid}/evaluate`, { expression }); },
     debugStop(sid) { return this.post(`/api/debug/${sid}/stop`); },
     debugSessions() { return this.get("/api/debug"); },
 

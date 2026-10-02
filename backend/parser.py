@@ -129,6 +129,14 @@ class Parser:
                 break
         return ast.Program(decls)
 
+    def parse_expression(self):
+        """解析单个表达式；调用方负责检查诊断与是否还有多余 token。"""
+        expr = self._expression()
+        if expr is not None and not self._check(T.EOF, T.SEMICOLON):
+            tok = self._cur()
+            self.diagnostics.add(parse_unexpected(tok, ["表达式结束"], self._source_line(tok.line)))
+        return expr
+
     def _function_decl(self):
         start = self._advance()  # func
         name_tok = self._cur()
@@ -482,3 +490,8 @@ class Parser:
 def parse(tokens, diagnostics=None):
     """便捷入口：返回 AST Program。"""
     return Parser(tokens, diagnostics).parse()
+
+
+def parse_expression(tokens, diagnostics=None):
+    """便捷入口：只解析一个表达式（供调试表达式求值复用语法链路）。"""
+    return Parser(tokens, diagnostics).parse_expression()

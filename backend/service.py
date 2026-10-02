@@ -336,7 +336,7 @@ class Service:
     def debug_start(self, source, breakpoints=None, pid=None, vid=None):
         """创建并启动一个调试会话（编译 -> 建 VM -> 建调试器 -> 启动）。"""
         sid = self._new_session_id()
-        sess = DebugSession(sid, source, [b + 1 for b in (breakpoints or [])], pid, vid)
+        sess = DebugSession(sid, source, list(breakpoints or []), pid, vid)
         self.debug_sessions[sid] = sess
         sess.start()
         return self.debug_state(sid)
@@ -355,6 +355,12 @@ class Service:
             sess.set_breakpoints(breakpoints)
         getattr(sess, command)()
         return self.debug_state(sid)
+
+    def debug_evaluate(self, sid, expression):
+        sess = self.debug_sessions.get(sid)
+        if not sess:
+            return {"ok": False, "error": "会话不存在或已过期"}
+        return sess.evaluate_expression(expression)
 
     def debug_stop(self, sid):
         sess = self.debug_sessions.pop(sid, None)
@@ -454,3 +460,13 @@ class DebugSession:
     def step_out(self):
         if self.debugger:
             self.debugger.step_out()
+
+    def evaluate_expression(self, expression):
+        if not self.result.success:
+            return {"ok": False, "compile_failed": True,
+                    "diagnostics": self.result.diagnostics.to_list()}
+        if not self.started or self.vm is None or not self.vm.frames:
+            return {"ok": False, "error": "请先启动调试并在断点或单步暂停后再求值表达式。"}
+        if self.vm.finished or self.vm.error or not (self.vm.paused or self.debugger.pause_reason == "entry"):
+            return {"ok": False, "error": "程序当前未暂停，不能求值表达式。"}
+        return self.debugger.evaluate_expression(expression).to_dict()

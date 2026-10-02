@@ -18,6 +18,7 @@ from . import debugger as debugger_mod
 from . import profiler as profiler_mod
 from . import storage
 from . import memory_model
+from . import runtime as rt
 from . import diagnostics as diag
 
 
@@ -51,6 +52,7 @@ def run_all():
     _test_lists()
     _test_runtime_errors()
     _test_debugger()
+    _test_expression_evaluator()
     _test_profiler()
     _test_memory_model()
     _test_storage()
@@ -180,6 +182,60 @@ def _test_debugger():
     snap3 = dbg.snapshot()
     ok_finish = snap3["finished"] is True and vm.output == ["3"]
     _check("调试器：继续运行到程序结束", ok_finish, str(vm.output))
+
+
+def _test_expression_evaluator():
+    from . import evaluator
+    src = ("func double(x) {\n"
+           "    var local = x;\n"
+           "    return local * 2;\n"
+           "}\n"
+           "var a = [1, 2];\n")
+    src += ("var s = \"ab\";\n"
+           "var n = 3;\n"
+           "var guard = double(n);\n"
+           "print(n);")
+    res = compiler.compile_source(src)
+    assert res.success, "表达式求值测试程序编译失败"
+    vm = vm_mod.VM(res.bytecode, res.source_lines)
+    dbg = debugger_mod.Debugger(vm, {3})
+    dbg.start()
+    _check("表达式求值：断点准备作用域", vm.paused and vm.frames[-1].func_name == "double", str((vm.paused, [f.func_name for f in vm.frames])))
+
+    r1 = evaluator.evaluate(vm, "local + len(a) + len(s)")
+    ok1 = r1.ok and r1.value == 7
+    _check("表达式求值：当前变量/用户函数/内置函数", ok1, str(r1.diagnostics.to_list()))
+
+    r_user = evaluator.evaluate(vm, "double(local)")
+    ok_user = r_user.ok and r_user.value == 6
+    _check("表达式求值：当前帧内递归调用用户函数", ok_user, str(r_user.diagnostics.to_list()))
+
+    r2 = evaluator.evaluate(vm, '"x" + s[0]')
+    ok2 = r2.ok and isinstance(r2.value, rt.RuntimeString) and r2.value.value == "xa"
+    _check("表达式求值：字符串与下标", ok2, str(r2.diagnostics.to_list()))
+
+    r3 = evaluator.evaluate(vm, "false && boom()")
+    ok3 = r3.ok and r3.value is False
+    _check("表达式求值：&& 短路不计算右侧", ok3, str(r3.diagnostics.to_list()))
+
+    r4 = evaluator.evaluate(vm, "true || boom()")
+    ok4 = r4.ok and r4.value is True
+    _check("表达式求值：|| 短路不计算右侧", ok4, str(r4.diagnostics.to_list()))
+
+    r5 = evaluator.evaluate(vm, "a")
+    ok5 = r5.ok and isinstance(r5.value, rt.RuntimeList) and r5.value.items == [1, 2]
+    _check("表达式求值：列表对象走 VM 堆模型", ok5, str(r5.diagnostics.to_list()))
+
+    r6 = evaluator.evaluate(vm, "a[9]")
+    ok6 = not r6.ok and any("越界" in d.message for d in r6.diagnostics)
+    _check("表达式求值：运行时错误返回具体诊断", ok6, str(r6.diagnostics.to_list()))
+
+    r7 = evaluator.evaluate(vm, "n = 4")
+    ok7 = not r7.ok and any("赋值" in d.message for d in r7.diagnostics)
+    _check("表达式求值：拒绝赋值语句", ok7, str(r7.diagnostics.to_list()))
+
+    ok_state = (not vm.output and vm.paused and vm.instruction_count == dbg.snapshot()["instruction_count"])
+    _check("表达式求值：不污染输出且不推进调试状态", ok_state, str((vm.output, vm.paused)))
 
 
 def _test_profiler():
